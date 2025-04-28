@@ -1,0 +1,12 @@
+{
+  "supabase": {
+    "url": "https://ugqchuhnfrshogwgnpnx.supabase.co",
+    "key": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVncWNodWhuZnJzaG9nd2ducG54Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDUzMjYyNjEsImV4cCI6MjA2MDkwMjI2MX0.MZCx3GOPIzMEieaAdmfKBtk2F4i6xDSgc-D52hp8L-A"
+  },
+  "whatsapp": {
+    "bot_name": "Penélope",
+    "session_data_path": "./session_data",
+    "qr_timeout": 60000,
+    "inactivity_timeout": 300000
+  }
+}

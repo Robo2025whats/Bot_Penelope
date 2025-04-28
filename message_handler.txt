@@ -1,0 +1,537 @@
+"""
+message_handler.py
+Gerencia as mensagens e interações com o WhatsApp
+"""
+import json
+import re
+import os
+from datetime import datetime
+from database import SupabaseManager
+from state_manager import StateManager
+
+class MessageHandler:
+    """Classe para gerenciar as mensagens e estados de conversa do bot Penélope"""
+    
+    def __init__(self):
+        """Inicializa o handler de mensagens"""
+        self.db = SupabaseManager()
+        self.state_manager = StateManager()
+        self.temp_data = {}
+        self.user_states = {}
+    
+    def get_main_menu(self, user_name):
+        """Retorna o menu principal formatado"""
+        return (
+            f"Olá, *{user_name}*! Que bom te ver novamente!\n"
+            "Como posso te ajudar?\n\n"
+            "1 ➕ Cadastrar nova conta a pagar\n"
+            "2 💰 Cadastrar nova conta a receber\n"
+            "3 ◌ Visualizar minhas contas a pagar\n"
+            "4 💼 Visualizar minhas contas a receber\n"
+            "5 ✓ Marcar conta como paga/recebida\n"
+            "6 × Cancelar uma conta\n"
+            "7 ↻ Adiar uma conta\n"
+            "8 ✏ Editar uma conta\n"
+            "9 🔍 Buscar conta por nome\n"
+            "0 ❓ Ajuda / Como funciona\n"
+            "# • Encerrar conversa"
+        )
+
+    def process_message(self, phone_number, message_text):
+        """Processa uma mensagem recebida e retorna a resposta"""
+        try:
+            # Verificar se o usuário já está cadastrado
+            exists, user_data = self.db.check_cliente_exists(phone_number)
+            
+            if not exists:
+                return self._handle_new_user(phone_number, message_text)
+            
+            user_id = user_data['id']
+            user_name = user_data['nome']
+            user_state = self.state_manager.get_user_state(phone_number)
+            current_state = user_state.get('state', 'main_menu')
+            current_step = user_state.get('step')
+            
+            # Verificar saudações
+            greetings = ["olá", "ola", "oi", "bom dia", "boa tarde", "boa noite"]
+            if current_state == 'main_menu' and message_text and message_text.lower() in greetings:
+                return self.get_main_menu(user_name), None, None
+            
+            # Processar com base no estado atual
+            if current_state == 'main_menu':
+                return self._handle_main_menu(phone_number, user_id, user_name, message_text)
+            elif current_state == 'welcome_new':
+                return self._handle_welcome_new(phone_number, user_id, user_name, message_text)
+            elif current_state == 'new_bill':
+                return self._handle_new_bill(phone_number, user_id, user_name, message_text)
+            elif current_state == 'new_receivable':
+                return self._handle_new_receivable(phone_number, user_id, user_name, message_text)
+            elif current_state == 'confirm_exit':
+                return self._handle_confirm_exit(phone_number, user_id, user_name, message_text)
+            else:
+                return self.get_main_menu(user_name), None, None
+                
+        except Exception as e:
+            print(f"Erro ao processar mensagem: {str(e)}")
+            return "Desculpe, ocorreu um erro ao processar sua mensagem. Por favor, tente novamente.", None, None
+
+    def _handle_new_user(self, phone_number, message_text):
+        """Gerencia interação com novos usuários"""
+        try:
+            user_state = self.state_manager.get_user_state(phone_number)
+            current_state = user_state.get('state', 'new_user_get_name')
+            
+            if current_state == 'new_user_get_name':
+                if not message_text or message_text.strip() == '':
+                    self.state_manager.save_user_state(
+                        phone_number,
+                        'new_user_get_name',
+                        None,
+                        {},
+                        {}
+                    )
+                    return (
+                        "Que bom te ver por aqui!\n"
+                        "Sou a *Penélope*, sua assistente de contas a pagar e receber.\n"
+                        "Ainda não nos conhecemos, como prefere ser chamado(a)?",
+                        None,
+                        None
+                    )
+                
+                name = message_text.strip()
+                success, user_data = self.db.create_cliente(name, phone_number)
+                
+                if not success:
+                    return "Desculpe, ocorreu um erro ao cadastrar seu usuário. Por favor, tente novamente mais tarde.", None, None
+                
+                self.state_manager.save_new_user_state(phone_number, name, user_data['id'])
+                return (
+                    f"Prazer em conhecê-lo(a), *{name}*!\n"
+                    "Vamos começar a organizar suas finanças?\n\n"
+                    "1 ➕ Cadastrar minha primeira conta\n"
+                    "2 ◌ Ver menu principal\n"
+                    "3 • Encerrar conversa",
+                    None,
+                    None
+                )
+            
+            self.state_manager.save_user_state(
+                phone_number,
+                'new_user_get_name',
+                None,
+                {},
+                {}
+            )
+            return (
+                "Que bom te ver por aqui!\n"
+                "Sou a *Penélope*, sua assistente de contas a pagar e receber.\n"
+                "Ainda não nos conhecemos, como prefere ser chamado(a)?",
+                None,
+                None
+            )
+        except Exception as e:
+            print(f"Erro no cadastro de novo usuário: {str(e)}")
+            return "Desculpe, ocorreu um erro no cadastro. Por favor, tente novamente.", None, None
+
+    def _handle_main_menu(self, phone_number, user_id, user_name, message_text):
+        """Gerencia interações no menu principal"""
+        try:
+            if message_text == '1':
+                self.state_manager.save_user_state(
+                    phone_number,
+                    'new_bill',
+                    'name',
+                    {'name': user_name, 'id': user_id},
+                    {}
+                )
+                return (
+                    "➕ *NOVA CONTA A PAGAR*\n"
+                    "Passo a passo:\n"
+                    "(Cancelar: Digite 0 a qualquer momento)\n\n"
+                    "📝 *Nome da conta:*\n"
+                    "(Ex: Aluguel, Energia, Internet)",
+                    None,
+                    None
+                )
+            elif message_text == '2':
+                self.state_manager.save_user_state(
+                    phone_number,
+                    'new_receivable',
+                    'name',
+                    {'name': user_name, 'id': user_id},
+                    {}
+                )
+                return (
+                    "💰 *NOVA CONTA A RECEBER*\n"
+                    "Passo a passo:\n"
+                    "(Cancelar: Digite 0 a qualquer momento)\n\n"
+                    "📝 *Nome do recebível:*\n"
+                    "(Ex: Salário, Freelance, Aluguel)",
+                    None,
+                    None
+                )
+            elif message_text == '#':
+                self.state_manager.save_user_state(
+                    phone_number,
+                    'confirm_exit',
+                    None,
+                    {'name': user_name, 'id': user_id},
+                    {}
+                )
+                return (
+                    "• *Deseja realmente encerrar a conversa?*\n\n"
+                    "1 ✓ Sim, encerrar\n"
+                    "2 • Voltar ao menu principal",
+                    None,
+                    None
+                )
+            else:
+                return (
+                    "× *Opção inválida!*\n"
+                    "Escolha um número entre as opções disponíveis.\n\n"
+                    f"{self.get_main_menu(user_name)}",
+                    None,
+                    None
+                )
+        except Exception as e:
+            print(f"Erro no menu principal: {str(e)}")
+            return "Desculpe, ocorreu um erro no processamento. Voltando ao menu principal.", None, None
+
+    def _handle_new_bill(self, phone_number, user_id, user_name, message_text):
+        """Gerencia o fluxo de cadastro de conta a pagar"""
+        try:
+            user_state = self.state_manager.get_user_state(phone_number)
+            current_step = user_state.get('step', 'name')
+            
+            # Cancelamento
+            if message_text == '0':
+                self.state_manager.save_user_state(
+                    phone_number,
+                    'main_menu',
+                    None,
+                    {'name': user_name, 'id': user_id},
+                    {}
+                )
+                return self.get_main_menu(user_name), None, None
+            
+            # Etapa 1: Nome da conta
+            if current_step == 'name':
+                if not message_text or not message_text.strip():
+                    return self._get_bill_name_prompt("Por favor, informe um nome válido para a conta."), None, None
+                
+                self.temp_data[phone_number] = {'name': message_text.strip()}
+                self.state_manager.save_user_state(
+                    phone_number,
+                    'new_bill',
+                    'value',
+                    {'name': user_name, 'id': user_id},
+                    self.temp_data[phone_number]
+                )
+                return self._get_bill_value_prompt(), None, None
+            
+            # Etapa 2: Valor da conta
+            elif current_step == 'value':
+                try:
+                    value = float(message_text.replace(',', '.'))
+                    if value <= 0:
+                        return self._get_bill_value_prompt("Por favor, informe um valor maior que zero."), None, None
+                    
+                    self.temp_data[phone_number]['value'] = value
+                    self.state_manager.save_user_state(
+                        phone_number,
+                        'new_bill',
+                        'due_date',
+                        {'name': user_name, 'id': user_id},
+                        self.temp_data[phone_number]
+                    )
+                    return self._get_bill_due_date_prompt(), None, None
+                except ValueError:
+                    return self._get_bill_value_prompt("Por favor, informe um valor numérico válido."), None, None
+            
+            # Etapa 3: Data de vencimento
+            elif current_step == 'due_date':
+                try:
+                    day, month = self._parse_date(message_text)
+                    due_date = f"{day:02d}/{month:02d}/{datetime.now().year}"
+                    self.temp_data[phone_number]['due_date'] = due_date
+                    self.state_manager.save_user_state(
+                        phone_number,
+                        'new_bill',
+                        'type',
+                        {'name': user_name, 'id': user_id},
+                        self.temp_data[phone_number]
+                    )
+                    return self._get_bill_type_prompt(), None, None
+                except ValueError as e:
+                    return self._get_bill_due_date_prompt(str(e)), None, None
+            
+            # Etapa 4: Tipo de conta
+            elif current_step == 'type':
+                if message_text in ['1', '2', '3']:
+                    types = {
+                        '1': 'Pessoal',
+                        '2': 'Corporativa', 
+                        '3': 'Outros'
+                    }
+                    self.temp_data[phone_number]['type'] = types[message_text]
+                    self.state_manager.save_user_state(
+                        phone_number,
+                        'new_bill',
+                        'recurrence',
+                        {'name': user_name, 'id': user_id},
+                        self.temp_data[phone_number]
+                    )
+                    return self._get_bill_recurrence_prompt(), None, None
+                else:
+                    return self._get_bill_type_prompt("Opção inválida. Escolha 1, 2 ou 3."), None, None
+            
+            # Implementar outras etapas conforme necessário
+            
+            # Fallback para erro desconhecido
+            self.state_manager.save_user_state(
+                phone_number,
+                'main_menu',
+                None,
+                {'name': user_name, 'id': user_id},
+                {}
+            )
+            return self.get_main_menu(user_name), None, None
+
+        except Exception as e:
+            print(f"Erro no fluxo de nova conta: {str(e)}")
+            self.state_manager.save_user_state(
+                phone_number,
+                'main_menu',
+                None,
+                {'name': user_name, 'id': user_id},
+                {}
+            )
+            return "Desculpe, ocorreu um erro no processamento. Voltando ao menu principal.", None, None
+
+    def _parse_date(self, date_str):
+        """Analisa e valida a data fornecida"""
+        date_match = re.match(r'^(\d{1,2})(?:/(\d{1,2}))?$', date_str)
+        if not date_match:
+            raise ValueError("Formato de data inválido. Use dia (10) ou dia/mês (10/06)")
+        
+        day = int(date_match.group(1))
+        month = int(date_match.group(2)) if date_match.group(2) else datetime.now().month
+        
+        if not (1 <= day <= 31):
+            raise ValueError("Dia inválido. Deve ser entre 1 e 31")
+        if not (1 <= month <= 12):
+            raise ValueError("Mês inválido. Deve ser entre 1 e 12")
+        
+        return day, month
+
+    def _get_bill_name_prompt(self, error_msg=None):
+        """Retorna o prompt para nome da conta"""
+        prompt = (
+            "➕ *NOVA CONTA A PAGAR*\n"
+            "Passo a passo:\n"
+            "(Cancelar: Digite 0 a qualquer momento)\n\n"
+            "📝 *Nome da conta:*\n"
+            "(Ex: Aluguel, Energia, Internet)"
+        )
+        return f"× *Ops!*\n{error_msg}\n\n{prompt}" if error_msg else prompt
+
+    def _get_bill_value_prompt(self, error_msg=None):
+        """Retorna o prompt para valor da conta"""
+        prompt = "➕ *NOVA CONTA A PAGAR*\n💲 *Valor:*\n(Ex: 120,50)"
+        return f"× *Ops!*\n{error_msg}\n\n{prompt}" if error_msg else prompt
+
+    def _get_bill_due_date_prompt(self, error_msg=None):
+        """Retorna o prompt para data de vencimento"""
+        prompt = "➕ *NOVA CONTA A PAGAR*\n📅 *Data de vencimento:*\n(Ex: 10 ou 10/06)"
+        return f"× *Ops!*\n{error_msg}\n\n{prompt}" if error_msg else prompt
+
+    def _get_bill_type_prompt(self, error_msg=None):
+        """Retorna o prompt para tipo de conta"""
+        prompt = (
+            "➕ *NOVA CONTA A PAGAR*\n📋 *Tipo de conta:*\n"
+            "1 👤 Pessoal\n2 🏢 Corporativa\n3 📂 Outros"
+        )
+        return f"× *Ops!*\n{error_msg}\n\n{prompt}" if error_msg else prompt
+
+    def _get_bill_recurrence_prompt(self, error_msg=None):
+        """Retorna o prompt para recorrência"""
+        prompt = (
+            "➕ *NOVA CONTA A PAGAR*\n🔄 *Recorrência:*\n"
+            "1 ∞ Mensal\n2 † Anual\n3 • Avulsa\n4 🗕 Trimestral"
+        )
+        return f"× *Ops!*\n{error_msg}\n\n{prompt}" if error_msg else prompt
+
+    def _handle_new_receivable(self, phone_number, user_id, user_name, message_text):
+        """Gerencia o fluxo de cadastro de conta a receber"""
+        # Implementação similar ao _handle_new_bill
+        try:
+            user_state = self.state_manager.get_user_state(phone_number)
+            current_step = user_state.get('step', 'name')
+            
+            if message_text == '0':
+                self.state_manager.save_user_state(
+                    phone_number,
+                    'main_menu',
+                    None,
+                    {'name': user_name, 'id': user_id},
+                    {}
+                )
+                return self.get_main_menu(user_name), None, None
+            
+            if current_step == 'name':
+                if not message_text or not message_text.strip():
+                    return (
+                        "× *Ops!*\n"
+                        "Por favor, informe um nome válido para o recebível.\n\n"
+                        "💰 *NOVA CONTA A RECEBER*\n"
+                        "📝 *Nome do recebível:*\n"
+                        "(Ex: Salário, Freelance, Aluguel)",
+                        None,
+                        None
+                    )
+                
+                self.temp_data[phone_number] = {'name': message_text.strip()}
+                self.state_manager.save_user_state(
+                    phone_number,
+                    'new_receivable',
+                    'value',
+                    {'name': user_name, 'id': user_id},
+                    self.temp_data[phone_number]
+                )
+                return (
+                    "💰 *NOVA CONTA A RECEBER*\n"
+                    "💲 *Valor:*\n"
+                    "(Ex: 120,50)",
+                    None,
+                    None
+                )
+            
+            # Implementar outras etapas...
+            
+            self.state_manager.save_user_state(
+                phone_number,
+                'main_menu',
+                None,
+                {'name': user_name, 'id': user_id},
+                {}
+            )
+            return self.get_main_menu(user_name), None, None
+            
+        except Exception as e:
+            print(f"Erro no fluxo de novo recebível: {str(e)}")
+            self.state_manager.save_user_state(
+                phone_number,
+                'main_menu',
+                None,
+                {'name': user_name, 'id': user_id},
+                {}
+            )
+            return "Desculpe, ocorreu um erro no processamento. Voltando ao menu principal.", None, None
+
+    def _handle_welcome_new(self, phone_number, user_id, user_name, message_text):
+        """Gerencia o estado de boas-vindas para novos usuários"""
+        try:
+            if message_text == '1':
+                self.state_manager.save_user_state(
+                    phone_number,
+                    'new_bill',
+                    'name',
+                    {'name': user_name, 'id': user_id},
+                    {}
+                )
+                return (
+                    "➕ *NOVA CONTA A PAGAR*\n"
+                    "Passo a passo:\n"
+                    "(Cancelar: Digite 0 a qualquer momento)\n\n"
+                    "📝 *Nome da conta:*\n"
+                    "(Ex: Aluguel, Energia, Internet)",
+                    None,
+                    None
+                )
+            elif message_text == '2':
+                self.state_manager.save_user_state(
+                    phone_number,
+                    'main_menu',
+                    None,
+                    {'name': user_name, 'id': user_id},
+                    {}
+                )
+                return self.get_main_menu(user_name), None, None
+            elif message_text == '3':
+                self.state_manager.save_user_state(
+                    phone_number,
+                    'confirm_exit',
+                    None,
+                    {'name': user_name, 'id': user_id},
+                    {}
+                )
+                return (
+                    "• *Deseja realmente encerrar a conversa?*\n\n"
+                    "1 ✓ Sim, encerrar\n"
+                    "2 • Voltar ao menu principal",
+                    None,
+                    None
+                )
+            else:
+                return (
+                    "× *Opção inválida!*\n"
+                    "Escolha um número entre as opções disponíveis.\n\n"
+                    f"Prazer em conhecê-lo(a), *{user_name}*!\n"
+                    "Vamos começar a organizar suas finanças?\n\n"
+                    "1 ➕ Cadastrar minha primeira conta\n"
+                    "2 ◌ Ver menu principal\n"
+                    "3 • Encerrar conversa",
+                    None,
+                    None
+                )
+        except Exception as e:
+            print(f"Erro no fluxo de boas-vindas: {str(e)}")
+            self.state_manager.save_user_state(
+                phone_number,
+                'main_menu',
+                None,
+                {'name': user_name, 'id': user_id},
+                {}
+            )
+            return "Desculpe, ocorreu um erro no processamento. Voltando ao menu principal.", None, None
+
+    def _handle_confirm_exit(self, phone_number, user_id, user_name, message_text):
+        """Gerencia a confirmação de saída"""
+        try:
+            if message_text == '1':
+                return (
+                    f"• *Até logo, {user_name}!*\n"
+                    "Foi um prazer te ajudar hoje. Quando quiser organizar suas contas, é só me chamar!\n\n"
+                    "_Penélope - Sua assistente de contas a pagar e receber_",
+                    None,
+                    None
+                )
+            elif message_text == '2':
+                self.state_manager.save_user_state(
+                    phone_number,
+                    'main_menu',
+                    None,
+                    {'name': user_name, 'id': user_id},
+                    {}
+                )
+                return self.get_main_menu(user_name), None, None
+            else:
+                return (
+                    "× *Opção inválida!*\n"
+                    "Escolha um número entre as opções disponíveis.\n\n"
+                    "• *Deseja realmente encerrar a conversa?*\n\n"
+                    "1 ✓ Sim, encerrar\n"
+                    "2 • Voltar ao menu principal",
+                    None,
+                    None
+                )
+        except Exception as e:
+            print(f"Erro no fluxo de confirmação de saída: {str(e)}")
+            self.state_manager.save_user_state(
+                phone_number,
+                'main_menu',
+                None,
+                {'name': user_name, 'id': user_id},
+                {}
+            )
+            return self.get_main_menu(user_name), None, None

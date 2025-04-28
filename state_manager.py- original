@@ -1,0 +1,76 @@
+"""
+state_manager.py
+Gerencia o estado da conversa usando arquivos locais
+"""
+import os
+import json
+from datetime import datetime
+
+class StateManager:
+    """Classe para gerenciar o estado da conversa usando arquivos locais"""
+    
+    def __init__(self, states_dir="./states"):
+        """Inicializa o gerenciador de estados"""
+        self.states_dir = states_dir
+        
+        # Criar diretório de estados se não existir
+        if not os.path.exists(states_dir):
+            os.makedirs(states_dir)
+    
+    def get_state_file_path(self, phone_number):
+        """Retorna o caminho do arquivo de estado para um número de telefone"""
+        # Sanitizar o número de telefone para usar como nome de arquivo
+        safe_phone = str(phone_number).replace('+', '').replace(' ', '')
+        return os.path.join(self.states_dir, f"{safe_phone}.json")
+    
+    def get_user_state(self, phone_number):
+        """Obtém o estado atual da conversa para um usuário"""
+        file_path = self.get_state_file_path(phone_number)
+        
+        if os.path.exists(file_path):
+            try:
+                with open(file_path, 'r', encoding='utf-8') as file:
+                    state_data = json.load(file)
+                return state_data
+            except Exception as e:
+                print(f"Erro ao ler estado do usuário {phone_number}: {e}")
+        
+        # Retorna um estado padrão se o arquivo não existir ou houver erro
+        return {
+            'state': 'main_menu',
+            'step': None,
+            'user_data': {},
+            'temp_data': {},
+            'last_activity': datetime.now().isoformat()
+        }
+    
+    def save_user_state(self, phone_number, state, step, user_data, temp_data):
+        """Salva o estado atual da conversa para um usuário"""
+        file_path = self.get_state_file_path(phone_number)
+        
+        try:
+            # Atualiza o timestamp de última atividade
+            state_data = {
+                'state': state,
+                'step': step,
+                'user_data': user_data,
+                'temp_data': temp_data,
+                'last_activity': datetime.now().isoformat()
+            }
+            
+            with open(file_path, 'w', encoding='utf-8') as file:
+                json.dump(state_data, file, ensure_ascii=False, indent=2)
+            return True
+        except Exception as e:
+            print(f"Erro ao salvar estado do usuário {phone_number}: {e}")
+            return False
+    
+    def save_new_user_state(self, phone_number, name, user_id):
+        """Salva o estado inicial para um novo usuário"""
+        return self.save_user_state(
+            phone_number,
+            'welcome_new',
+            None,
+            {'name': name, 'id': user_id},
+            {}
+        )

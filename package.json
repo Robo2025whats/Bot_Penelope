@@ -1,0 +1,24 @@
+{
+  "name": "bot-penelope",
+  "version": "1.0.0",
+  "description": "Bot de WhatsApp para gerenciamento de contas a pagar e receber",
+  "main": "whatsapp_bot.js",
+  "scripts": {
+    "start": "node whatsapp_bot.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "whatsapp",
+    "bot",
+    "contas",
+    "finanças",
+    "penelope"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "puppeteer": "^24.7.2",
+    "qrcode-terminal": "^0.12.0",
+    "whatsapp-web.js": "^1.19.5"
+  }
+}
